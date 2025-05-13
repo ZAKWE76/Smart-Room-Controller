@@ -119,5 +119,5 @@ Make sure to follow this schematic accurately when assembling your hardware.
 ---
 
 **Author**: Nomcebo Zakwe
-**Note**: All devices must be on the same local network to communicate. No external references used.
+**Note**: All devices must be on the same local network to communicate. 
 
