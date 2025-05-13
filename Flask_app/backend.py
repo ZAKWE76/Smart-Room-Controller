@@ -1,99 +1,88 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from flask import Flask, request, jsonify # type: ignore
+from flask_cors import CORS # type: ignore
 
 app = Flask(__name__)
 CORS(app)
 
 # Global state
-system_state = {
+initial_state = {
     "light_level": 0,             # from LDR (0-4095)
     "motion_detected": False,     # from PIR
-    "temperature": 25.0,          # from DHT11
+    "temperature": 20.0,          # from DHT11
 
     "led_on": False,              # LED control
     "servo_angle": 0,             # Servo control
     "auto_mode": True,            # Auto/manual mode
 
-    "temp_threshold": 28.0,       # Trigger temp for servo
+    "temp_threshold": 25.0,       # Trigger temp for servo
     "light_threshold": 2000       # Trigger light for LED
 }
 
-@app.route('/api/sensor_data', methods=['POST'])
+@app.route('/esp/update', methods=['POST'])
 def receive_sensor_data():
     try:
         data = request.get_json()
 
-        # Update sensors
-        system_state["light_level"] = data.get("light_level", system_state["light_level"])
-        system_state["motion_detected"] = data.get("motion_detected", system_state["motion_detected"])
-        system_state["temperature"] = data.get("temperature", system_state["temperature"])
-        system_state["auto_mode"] = data.get("auto_mode", system_state["auto_mode"])
+        # Update data from esp
+        initial_state["light_level"] = data.get("light_level", initial_state["light_level"]) #update the ESP light level of LDR
+        initial_state["motion_detected"] = data.get("motion_detected", initial_state["motion_detected"]) #update the ESP motion status
+        initial_state["temperature"] = data.get("temperature", initial_state["temperature"]) #update the ESP temperature
+        initial_state["auto_mode"] = data.get("auto_mode", initial_state["auto_mode"]) #update the current mode
 
-        # Auto control logic
-        if system_state["auto_mode"]:
-            system_state["led_on"] = system_state["light_level"] < system_state["light_threshold"]
-            if system_state["motion_detected"] and system_state["temperature"] > system_state["temp_threshold"]:
-                system_state["servo_angle"] = 90
+        # only control the led, servo, and pir sensor automatically if in auto mode
+        if initial_state["auto_mode"]:
+            initial_state["led_on"] = initial_state["light_level"] < initial_state["light_threshold"]
+            if initial_state["motion_detected"] and initial_state["temperature"] > initial_state["temp_threshold"]:
+                initial_state["servo_angle"] = 90 #turn servo(fan) ON if the temperature is above the threshold temperature
             else:
-                system_state["servo_angle"] = 0
+                initial_state["servo_angle"] = 0
 
-        # Send flat JSON response (easy for ESP)
+        # update JSON file
         return jsonify({
-            "status": "success",
-            "auto_mode": system_state["auto_mode"],
-            "led_on": system_state["led_on"],
-            "servo_angle": system_state["servo_angle"]
+            "status": "ESP data received successfully",
+            "auto_mode": initial_state["auto_mode"],
+            "led_on": initial_state["led_on"],
+            "servo_angle": initial_state["servo_angle"]
         })
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/system_state', methods=['GET'])
-def get_system_state():
-    return jsonify(system_state)
+@app.route('/esp/control', methods=['GET']) #ESP fetches the default state from the server
+def send_to_esp():
+    return jsonify(initial_state)
 
-@app.route('/api/update_controls', methods=['POST'])
+#update flet data
+@app.route('/flet/update', methods=['POST'])
 def update_controls():
     try:
         data = request.get_json()
 
-        if 'auto_mode' in data:
-            system_state['auto_mode'] = bool(data['auto_mode'])
+        if 'auto_mode' in data:   #Check and update the the mode
+            initial_state['auto_mode'] = bool(data['auto_mode'])
 
-        if not system_state['auto_mode']:
-            if 'led_on' in data:
-                system_state['led_on'] = bool(data['led_on'])
+        #flet should only control the LED and servo if in manual mode
+        if not initial_state['auto_mode']:        
+            if 'led_on' in data:   #if in manual mode, control the LED
+                initial_state['led_on'] = bool(data['led_on'])
             if 'servo_angle' in data:
                 angle = int(data['servo_angle'])
-                system_state['servo_angle'] = max(0, min(180, angle))
+                initial_state['servo_angle'] = max(0, min(180, angle))
 
         return jsonify({"status": "success"})
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/update_thresholds', methods=['POST'])
-def update_thresholds():
-    try:
-        data = request.get_json()
 
-        if 'temp_threshold' in data:
-            system_state['temp_threshold'] = float(data['temp_threshold'])
-        if 'light_threshold' in data:
-            system_state['light_threshold'] = int(data['light_threshold'])
-
-        return jsonify({"status": "success"})
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
+#get the data from the server and display on the dashboard
 @app.route('/api/control_status', methods=['GET'])
 def control_status():
-    # This is used by ESP in manual mode
+    
     return jsonify({
-        "auto_mode": system_state["auto_mode"],
-        "led_on": system_state["led_on"],
-        "servo_angle": system_state["servo_angle"]
+        "auto_mode": initial_state["auto_mode"],
+        "led_on": initial_state["led_on"],
+        "servo_angle": initial_state["servo_angle"]
     })
 
 if __name__ == '__main__':

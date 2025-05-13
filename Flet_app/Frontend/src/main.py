@@ -1,81 +1,131 @@
-import flet as ft
-import requests
-import threading
-import time
+# Import required libraries
+import flet as ft  # Flet framework for UI
+import requests    # For HTTP requests to backend
+import threading   # For running background tasks
+import time        # For timing operations
 
-BACKEND_URL = "http://192.168.0.149:5000"
-REFRESH_INTERVAL = 3  # seconds
+# Configuration constants
+BACKEND_URL = "http://192.168.0.149:5000"  # Base URL of Flask backend
+REFRESH_INTERVAL = 2  # Seconds between automatic refreshes
 
 def main(page: ft.Page):
-    page.title = "Smart Room Controller"
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.scroll = ft.ScrollMode.AUTO
+    # Configure the main page properties
+    page.title = "Smart Room Controller"  # Window title
+    page.theme_mode = ft.ThemeMode.LIGHT  # Light theme
+    # Center align all content vertically and horizontally
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+    page.padding = 20  
 
-    # UI Components
-    light_display = ft.Text("Light Level: --", size=16)
-    motion_display = ft.Text("Motion: --", size=16)
-    temp_display = ft.Text("Temperature: -- °C", size=16)
+    # UI elements for displaying sensor data
+    current_light = ft.Text("Light: --")  # Light level display
+    current_motion = ft.Text("Motion: --")  # Motion detection display
+    current_temp = ft.Text("Temp: -- °C")  # Temperature display
+    current_led = ft.Text("LED: --")  # LED state display
+    current_servo = ft.Text("Servo: --°")  # Servo angle display
+    status_message = ft.Text("", color=ft.Colors.BLUE)  # Status message area
 
-    auto_mode_switch = ft.Switch(label="Auto Mode", value=True)
-    led_toggle = ft.Switch(label="LED ON/OFF", value=False)
-    fan_toggle = ft.Switch(label="Fan (Servo) Angle", value=False)
+    # control widgets
+    auto_switch = ft.Switch(label="Auto Mode", value=True)  # Auto/manual toggle
+    # Manual controls (disabled when in auto mode)
+    led_switch = ft.Switch(label="Manual LED Control", value=False, disabled=True)
+    servo_slider = ft.Slider(min=0, max=180, divisions=180, label="{value}°", disabled=True)
 
-    status_text = ft.Text("Connecting...", color=ft.Colors.BLUE_GREY)
+    def update_display(data):
+        
+        # Update inputs displays
+        current_light.value = f"Light: {data.get('light_level', '--')}"
+        current_motion.value = f"Motion: {'YES' if data.get('motion_detected') else 'NO'}"
+        current_temp.value = f"Temp: {data.get('temperature', '--')} °C"
+        # Update output states
+        current_led.value = f"LED: {'ON' if data.get('led_on') else 'OFF'}"
+        current_servo.value = f"Servo: {data.get('servo_angle', '--')}°"
+        
+        # Update control widgets
+        auto_switch.value = data.get('auto_mode', True)
+        led_switch.value = data.get('led_on', False)
+        servo_slider.value = data.get('servo_angle', 0)
+        
+        # Enable/disable manual controls based on current mode
+        led_switch.disabled = auto_switch.value
+        servo_slider.disabled = auto_switch.value
 
-    def update_controls(e=None):
+    def fetch_state():
+        #Fetch current state from backend and update UI
         try:
+            # Send GET request to backend
+            response = requests.get(f"{BACKEND_URL}/esp/control")
+            if response.status_code == 200:  # If successful
+                update_display(response.json())  # Update UI with new data
+                # Update status with current time
+                status_message.value = "Last update: " + time.strftime("%H:%M:%S")
+            else:
+                # Show HTTP error if request failed
+                status_message.value = f"Error: {response.status_code}"
+        except Exception as e:
+            # Show connection errors
+            status_message.value = f"Connection error: {str(e)}"
+        page.update()  # Refresh the UI
+
+    def update_controls(e):
+        #Send control changes to backend
+        try:
+            # Prepare control data to send
             payload = {
-                "auto_mode": auto_mode_switch.value,
-                "led_on": led_toggle.value,
-                "servo_angle": 90 if fan_toggle.value else 0
+                "auto_mode": auto_switch.value,
+                "led_on": led_switch.value,
+                "servo_angle": int(servo_slider.value)
             }
-            requests.post(f"{BACKEND_URL}/api/update_controls", json=payload)
-        except Exception as ex:
-            status_text.value = f"Control update failed: {ex}"
-            page.update()
+            # Send POST request to backend
+            response = requests.post(f"{BACKEND_URL}/flet/update", json=payload)
+            if response.status_code == 200:
+                status_message.value = "Controls updated!"
+            else:
+                status_message.value = f"Update failed: {response.text}"
+        except Exception as e:
+            status_message.value = f"Error: {str(e)}"
+        page.update()  # Refresh the UI
 
-    def refresh_state():
-        while True:
-            try:
-                response = requests.get(f"{BACKEND_URL}/api/system_state")
-                if response.ok:
-                    data = response.json()
-                    light_display.value = f"Light Level: {data['light_level']}"
-                    motion_display.value = f"Motion: {'YES' if data['motion_detected'] else 'NO'}"
-                    temp_display.value = f"Temperature: {data['temperature']} °C"
-                    auto_mode_switch.value = data['auto_mode']
-                    led_toggle.value = data['led_on']
-                    fan_toggle.value = data['servo_angle'] == 90
-                    status_text.value = "Updated successfully"
-                else:
-                    status_text.value = f"Error: {response.status_code}"
-            except Exception as e:
-                status_text.value = f"Connection error: {e}"
+    def auto_refresh():
+        #Background thread to periodically fetch updates
+        while True:  # Run continuously
+            fetch_state()  # Get latest data
+            time.sleep(REFRESH_INTERVAL)  # Wait 2 seconds before next refresh
 
-            page.update()
-            time.sleep(REFRESH_INTERVAL)
+    # Set up event handlers for control changes
+    auto_switch.on_change = update_controls
+    led_switch.on_change = update_controls
+    servo_slider.on_change = update_controls
 
-    # Event Handlers
-    auto_mode_switch.on_change = update_controls
-    led_toggle.on_change = update_controls
-    fan_toggle.on_change = update_controls
-
-    # Layout
+    # Build the page layout
     page.add(
-        ft.Column([
-            ft.Text("Smart Room Dashboard", size=24, weight="bold"),
-            light_display,
-            motion_display,
-            temp_display,
+        ft.Column([  # Vertical layout
+            ft.Text("Smart Room Controller Dashboard", size=24, weight="bold"),
+            ft.Divider(),  # Horizontal divider
+            
+            # First row of sensor displays
+            ft.Row([current_light, current_motion, current_temp], spacing=20),
+            # Second row of actuator displays
+            ft.Row([current_led, current_servo], spacing=20),
             ft.Divider(),
-            auto_mode_switch,
-            led_toggle,
-            fan_toggle,
-            status_text
-        ], spacing=20, expand=True)
+            
+            # Control section
+            auto_switch,
+            led_switch,
+            servo_slider,
+            ft.ElevatedButton("Update Controls", on_click=update_controls),
+            ft.Divider(),
+            
+            # Status message area
+            status_message
+        ], spacing=10)  # Space between elements
     )
 
-    # Start background thread for state refresh
-    threading.Thread(target=refresh_state, daemon=True).start()
+    # Initial data fetch when app starts
+    fetch_state()
+    
+    # Start background refresh thread (daemon=True stops it when main thread ends)
+    threading.Thread(target=auto_refresh, daemon=True).start()
 
+# Launch the application
 ft.app(target=main)
