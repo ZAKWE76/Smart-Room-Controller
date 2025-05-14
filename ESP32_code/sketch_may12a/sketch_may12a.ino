@@ -6,8 +6,8 @@
 #include <DHT.h>           // For temperature/humidity sensor
 
 // WiFi network credentials
-const char* ssid = "Dinny properties main";  
-const char* password = "#Tseleng@1";         
+const char* ssid = "Dinny properties main";  //WI-FI SSID
+const char* password = "#Tseleng@1";    //password     
 
 // Flask server configuration
 const char* serverUrl = "http://192.168.0.149:5000/esp/update";  // Endpoint for sensor data
